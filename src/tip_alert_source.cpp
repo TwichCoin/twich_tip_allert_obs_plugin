@@ -26,6 +26,22 @@ static const char* tip_alert_get_name(void*)
   return "TWICH Tip Alerts (Telegram)";
 }
 
+static void tip_alert_defaults(obs_data_t* settings)
+{
+  // Tier defaults (requested): something / 10 / 50
+  obs_data_set_default_double(settings, "tier1_threshold", 0.0);
+  obs_data_set_default_double(settings, "tier2_threshold", 10.0);
+  obs_data_set_default_double(settings, "tier3_threshold", 50.0);
+
+  // Keep legacy keys sane too
+  obs_data_set_default_string(settings, "animation", "");
+  obs_data_set_default_string(settings, "tier1_media", "");
+  obs_data_set_default_string(settings, "tier2_media", "");
+  obs_data_set_default_string(settings, "tier3_media", "");
+
+  obs_data_set_default_double(settings, "duration", 3.0);
+}
+
 // Read a string from current source settings (works even before user clicks OK)
 static std::string get_setting_str(obs_source_t* src, const char* key)
 {
@@ -175,8 +191,26 @@ static void* tip_alert_create(obs_data_t* settings, obs_source_t* source)
   auto* s = new tip_alert_source();
   s->source = source;
 
+  // Tier settings (new)
+  s->tier1_threshold = obs_data_get_double(settings, "tier1_threshold");
+  s->tier2_threshold = obs_data_get_double(settings, "tier2_threshold");
+  s->tier3_threshold = obs_data_get_double(settings, "tier3_threshold");
+
+  if (s->tier2_threshold < s->tier1_threshold)
+    s->tier2_threshold = s->tier1_threshold;
+  if (s->tier3_threshold < s->tier2_threshold)
+    s->tier3_threshold = s->tier2_threshold;
+
+  s->tier1_media = obs_data_get_string(settings, "tier1_media");
+  s->tier2_media = obs_data_get_string(settings, "tier2_media");
+  s->tier3_media = obs_data_get_string(settings, "tier3_media");
+
+  // Back-compat: if user hasn't configured tier1_media yet, reuse old key
   s->animation_path = obs_data_get_string(settings, "animation");
-  s->duration_sec   = (float)obs_data_get_double(settings, "duration");
+  if (s->tier1_media.empty() && !s->animation_path.empty())
+    s->tier1_media = s->animation_path;
+
+  s->duration_sec = (float)obs_data_get_double(settings, "duration");
 
   s->tg_phone = obs_data_get_string(settings, "tg_phone");
   s->tg_code  = obs_data_get_string(settings, "tg_code");
@@ -193,6 +227,12 @@ static void* tip_alert_create(obs_data_t* settings, obs_source_t* source)
 static void tip_alert_destroy(void* data)
 {
   auto* s = (tip_alert_source*)data;
+
+  // IMPORTANT: remove active children before releasing
+  if (s->source) {
+    if (s->media) obs_source_remove_active_child(s->source, s->media);
+    if (s->text)  obs_source_remove_active_child(s->source, s->text);
+  }
 
   if (s->media) obs_source_release(s->media);
   if (s->text)  obs_source_release(s->text);
@@ -338,15 +378,29 @@ static obs_properties_t* tip_alert_properties(void* data)
   obs_properties_add_text(props, "tg_pass", "Telegram 2FA password (if enabled)", OBS_TEXT_PASSWORD);
   obs_properties_add_button(props, "tg_submit_pass", "Submit Password", on_submit_pass);
 
-  // Animation settings
-  obs_properties_add_path(
-    props,
-    "animation",
-    "Animation (WebM)",
-    OBS_PATH_FILE,
-    "WebM Files (*.webm)",
-    nullptr
+  // Tiered animation settings
+  obs_properties_t* media_grp = obs_properties_create();
+  obs_properties_add_text(
+    media_grp,
+    "tier_help",
+    "Highest tier whose threshold is met will be played.\n"
+    "Defaults are 0 / 10 / 50.",
+    OBS_TEXT_INFO
   );
+
+  obs_properties_add_float(media_grp, "tier1_threshold", "Tier 1 threshold", 0.0, 1e9, 0.1);
+  obs_properties_add_path (media_grp, "tier1_media", "Tier 1 media (WebM)",
+                           OBS_PATH_FILE, "WebM Files (*.webm)", nullptr);
+
+  obs_properties_add_float(media_grp, "tier2_threshold", "Tier 2 threshold", 0.0, 1e9, 0.1);
+  obs_properties_add_path (media_grp, "tier2_media", "Tier 2 media (WebM)",
+                           OBS_PATH_FILE, "WebM Files (*.webm)", nullptr);
+
+  obs_properties_add_float(media_grp, "tier3_threshold", "Tier 3 threshold", 0.0, 1e9, 0.1);
+  obs_properties_add_path (media_grp, "tier3_media", "Tier 3 media (WebM)",
+                           OBS_PATH_FILE, "WebM Files (*.webm)", nullptr);
+
+  obs_properties_add_group(props, "tiered_media", "Alert Media (by Amount)", OBS_GROUP_NORMAL, media_grp);
 
   obs_properties_add_float(
     props,
@@ -411,8 +465,25 @@ static obs_properties_t* tip_alert_properties(void* data)
 static void tip_alert_update(void* data, obs_data_t* settings)
 {
   auto* s = (tip_alert_source*)data;
+  s->tier1_threshold = obs_data_get_double(settings, "tier1_threshold");
+  s->tier2_threshold = obs_data_get_double(settings, "tier2_threshold");
+  s->tier3_threshold = obs_data_get_double(settings, "tier3_threshold");
+
+  if (s->tier2_threshold < s->tier1_threshold)
+    s->tier2_threshold = s->tier1_threshold;
+  if (s->tier3_threshold < s->tier2_threshold)
+    s->tier3_threshold = s->tier2_threshold;
+
+  s->tier1_media = obs_data_get_string(settings, "tier1_media");
+  s->tier2_media = obs_data_get_string(settings, "tier2_media");
+  s->tier3_media = obs_data_get_string(settings, "tier3_media");
+
+  // Back-compat (read old setting too)
   s->animation_path = obs_data_get_string(settings, "animation");
-  s->duration_sec   = (float)obs_data_get_double(settings, "duration");
+  if (s->tier1_media.empty() && !s->animation_path.empty())
+    s->tier1_media = s->animation_path;
+
+  s->duration_sec = (float)obs_data_get_double(settings, "duration");
 
   s->tg_phone = obs_data_get_string(settings, "tg_phone");
   s->tg_code  = obs_data_get_string(settings, "tg_code");
@@ -443,12 +514,50 @@ static void tip_alert_tick(void* data, float seconds)
     s->queue.pop();
   }
 
-  // Create child sources lazily
-  if (!s->media && !s->animation_path.empty()) {
-    obs_data_t* d = obs_data_create();
-    obs_data_set_string(d, "local_file", s->animation_path.c_str());
-    s->media = obs_source_create("ffmpeg_source", "tip_anim", d, nullptr);
-    obs_data_release(d);
+  // Pick which media to play based on configured thresholds
+  const std::string* chosen_media = nullptr;
+  double amount = 0.0;
+  try {
+    amount = std::stod(ev.amount_str);
+  } catch (...) {
+    amount = 0.0;
+  }
+
+  if (amount >= s->tier3_threshold && !s->tier3_media.empty())
+    chosen_media = &s->tier3_media;
+  else if (amount >= s->tier2_threshold && !s->tier2_media.empty())
+    chosen_media = &s->tier2_media;
+  else if (amount >= s->tier1_threshold && !s->tier1_media.empty())
+    chosen_media = &s->tier1_media;
+
+  // Create/update child media source lazily
+  if (chosen_media && !chosen_media->empty()) {
+    if (!s->media) {
+      obs_data_t* d = obs_data_create();
+      obs_data_set_string(d, "local_file", chosen_media->c_str());
+
+      // IMPORTANT: make ffmpeg_source actually treat this as a local file and restart reliably
+      obs_data_set_bool(d, "is_local_file", true);
+      obs_data_set_bool(d, "restart_on_activate", true);
+      obs_data_set_bool(d, "close_when_inactive", false);
+
+      s->media = obs_source_create("ffmpeg_source", "tip_anim", d, nullptr);
+      obs_data_release(d);
+
+      // IMPORTANT: ensure child is active so it decodes/ticks reliably
+      if (s->media)
+        obs_source_add_active_child(s->source, s->media);
+    } else {
+      obs_data_t* md = obs_source_get_settings(s->media);
+      obs_data_set_string(md, "local_file", chosen_media->c_str());
+
+      obs_data_set_bool(md, "is_local_file", true);
+      obs_data_set_bool(md, "restart_on_activate", true);
+      obs_data_set_bool(md, "close_when_inactive", false);
+
+      obs_source_update(s->media, md);
+      obs_data_release(md);
+    }
   }
 
   if (!s->text) {
@@ -456,6 +565,9 @@ static void tip_alert_tick(void* data, float seconds)
     obs_data_set_string(d, "text", "");
     s->text = obs_source_create("text_gdiplus", "tip_text", d, nullptr);
     obs_data_release(d);
+
+    if (s->text)
+      obs_source_add_active_child(s->source, s->text);
   }
 
   // Update text
@@ -470,10 +582,14 @@ static void tip_alert_tick(void* data, float seconds)
     obs_data_release(td);
   }
 
-  // Restart animation
-  if (s->media) {
+  // Restart animation ONLY if we matched a tier this event.
+  // Otherwise, ensure media is disabled so we don't replay a previous tier.
+  if (chosen_media && !chosen_media->empty() && s->media) {
     obs_source_set_enabled(s->media, true);
     obs_source_media_restart(s->media);
+  } else {
+    if (s->media)
+      obs_source_set_enabled(s->media, false);
   }
 
   if (s->text)
@@ -521,17 +637,23 @@ static void tip_alert_render(void* data, gs_effect_t*)
 }
 
 // Exported source info
-struct obs_source_info tip_alert_source_info = {
-  .id = "twich_tip_alert",
-  .type = OBS_SOURCE_TYPE_INPUT,
-  .output_flags = OBS_SOURCE_VIDEO,
-  .get_name = tip_alert_get_name,
-  .create = tip_alert_create,
-  .destroy = tip_alert_destroy,
-  .get_width = tip_alert_get_width,
-  .get_height = tip_alert_get_height,
-  .get_properties = tip_alert_properties,
-  .update = tip_alert_update,
-  .video_tick = tip_alert_tick,
-  .video_render = tip_alert_render,
-};
+obs_source_info tip_alert_source_info = {};
+
+void init_tip_alert_source_info(void)
+{
+  // NOTE: assignments are safe regardless of struct declaration order
+  tip_alert_source_info.id           = "twich_tip_alert";
+  tip_alert_source_info.type         = OBS_SOURCE_TYPE_INPUT;
+  tip_alert_source_info.output_flags = OBS_SOURCE_VIDEO;
+
+  tip_alert_source_info.get_name       = tip_alert_get_name;
+  tip_alert_source_info.create         = tip_alert_create;
+  tip_alert_source_info.destroy        = tip_alert_destroy;
+  tip_alert_source_info.get_width      = tip_alert_get_width;
+  tip_alert_source_info.get_height     = tip_alert_get_height;
+  tip_alert_source_info.get_defaults   = tip_alert_defaults;   // defaults 0/10/50
+  tip_alert_source_info.get_properties = tip_alert_properties;
+  tip_alert_source_info.update         = tip_alert_update;
+  tip_alert_source_info.video_tick     = tip_alert_tick;
+  tip_alert_source_info.video_render   = tip_alert_render;
+}
