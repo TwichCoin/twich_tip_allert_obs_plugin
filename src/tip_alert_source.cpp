@@ -51,6 +51,31 @@ static std::string get_setting_str(obs_source_t* src, const char* key)
   return v;
 }
 
+// Apply consistent styling to Text (GDI+)
+// IMPORTANT: text_gdiplus uses "color" (0xRRGGBB), NOT "color1".
+static void apply_tip_text_style(obs_data_t* d)
+{
+  // Font: normal size (adjust if you want)
+  obs_data_t* font = obs_data_create();
+  obs_data_set_string(font, "face", "Arial"); // or "Segoe UI"
+  obs_data_set_int(font, "size", 36);         // normal sized; try 28-42
+  obs_data_set_int(font, "flags", 0);         // regular
+  obs_data_set_obj(d, "font", font);
+  obs_data_release(font);
+
+  // Yellow text for text_gdiplus: 0xRRGGBB
+  obs_data_set_int(d, "color", 0x00FFFF00);
+
+  // Outline for readability
+  obs_data_set_bool(d, "outline", true);
+  obs_data_set_int(d, "outline_size", 2);
+  obs_data_set_int(d, "outline_color", 0x000000); // black
+
+  // Align to avoid weird defaults
+  obs_data_set_int(d, "align", 0);   // left
+  obs_data_set_int(d, "valign", 0);  // top
+}
+
 // ---------- Status formatting ----------
 static std::string format_auth_status(const std::string& st)
 {
@@ -258,7 +283,6 @@ static bool on_set_phone(obs_properties_t*, obs_property_t*, void* data)
     blog(LOG_INFO, "[TWICH] not waiting for phone, ignoring");
   }
 
-  // UI will update automatically via callback, but keep instant feedback too:
   std::string ui =
     std::string("TDLib state: ") + (st.empty() ? "(empty)" : st) + "\n" +
     format_auth_status(st);
@@ -359,7 +383,6 @@ static obs_properties_t* tip_alert_properties(void* data)
 {
   obs_properties_t* props = obs_properties_create();
 
-  // Read-only status box (multiline disabled text widget)
   obs_property_t* p_status = obs_properties_add_text(
     props,
     "tg_auth_status",
@@ -368,7 +391,6 @@ static obs_properties_t* tip_alert_properties(void* data)
   );
   obs_property_set_enabled(p_status, false);
 
-  // Telegram login UI
   obs_properties_add_text(props, "tg_phone", "Telegram phone", OBS_TEXT_DEFAULT);
   obs_properties_add_button(props, "tg_set_phone", "Set Phone", on_set_phone);
 
@@ -378,7 +400,6 @@ static obs_properties_t* tip_alert_properties(void* data)
   obs_properties_add_text(props, "tg_pass", "Telegram 2FA password (if enabled)", OBS_TEXT_PASSWORD);
   obs_properties_add_button(props, "tg_submit_pass", "Submit Password", on_submit_pass);
 
-  // Tiered animation settings
   obs_properties_t* media_grp = obs_properties_create();
   obs_properties_add_text(
     media_grp,
@@ -409,7 +430,6 @@ static obs_properties_t* tip_alert_properties(void* data)
     1.0, 10.0, 0.1
   );
 
-  // Test alert
   obs_properties_add_button(
     props,
     "test_alert",
@@ -428,7 +448,6 @@ static obs_properties_t* tip_alert_properties(void* data)
     }
   );
 
-  // --- Advanced group (creds + help) ---
   obs_properties_t* adv = obs_properties_create();
 
   obs_properties_add_text(
@@ -478,7 +497,6 @@ static void tip_alert_update(void* data, obs_data_t* settings)
   s->tier2_media = obs_data_get_string(settings, "tier2_media");
   s->tier3_media = obs_data_get_string(settings, "tier3_media");
 
-  // Back-compat (read old setting too)
   s->animation_path = obs_data_get_string(settings, "animation");
   if (s->tier1_media.empty() && !s->animation_path.empty())
     s->tier1_media = s->animation_path;
@@ -535,8 +553,6 @@ static void tip_alert_tick(void* data, float seconds)
     if (!s->media) {
       obs_data_t* d = obs_data_create();
       obs_data_set_string(d, "local_file", chosen_media->c_str());
-
-      // IMPORTANT: make ffmpeg_source actually treat this as a local file and restart reliably
       obs_data_set_bool(d, "is_local_file", true);
       obs_data_set_bool(d, "restart_on_activate", true);
       obs_data_set_bool(d, "close_when_inactive", false);
@@ -544,13 +560,11 @@ static void tip_alert_tick(void* data, float seconds)
       s->media = obs_source_create("ffmpeg_source", "tip_anim", d, nullptr);
       obs_data_release(d);
 
-      // IMPORTANT: ensure child is active so it decodes/ticks reliably
       if (s->media)
         obs_source_add_active_child(s->source, s->media);
     } else {
       obs_data_t* md = obs_source_get_settings(s->media);
       obs_data_set_string(md, "local_file", chosen_media->c_str());
-
       obs_data_set_bool(md, "is_local_file", true);
       obs_data_set_bool(md, "restart_on_activate", true);
       obs_data_set_bool(md, "close_when_inactive", false);
@@ -563,6 +577,10 @@ static void tip_alert_tick(void* data, float seconds)
   if (!s->text) {
     obs_data_t* d = obs_data_create();
     obs_data_set_string(d, "text", "");
+
+    // Apply style on creation
+    apply_tip_text_style(d);
+
     s->text = obs_source_create("text_gdiplus", "tip_text", d, nullptr);
     obs_data_release(d);
 
@@ -570,20 +588,24 @@ static void tip_alert_tick(void* data, float seconds)
       obs_source_add_active_child(s->source, s->text);
   }
 
-  // Update text
+  // Update text (always include TWICH TIP label)
   std::string text =
+    "TWICH TIP\n"
     "+" + ev.amount_str + " " + ev.symbol + "\n" +
     ev.message;
 
   if (s->text) {
     obs_data_t* td = obs_source_get_settings(s->text);
     obs_data_set_string(td, "text", text.c_str());
+
+    // Force style every alert (fixes “white” + “huge”)
+    apply_tip_text_style(td);
+
     obs_source_update(s->text, td);
     obs_data_release(td);
   }
 
   // Restart animation ONLY if we matched a tier this event.
-  // Otherwise, ensure media is disabled so we don't replay a previous tier.
   if (chosen_media && !chosen_media->empty() && s->media) {
     obs_source_set_enabled(s->media, true);
     obs_source_media_restart(s->media);
@@ -641,7 +663,6 @@ obs_source_info tip_alert_source_info = {};
 
 void init_tip_alert_source_info(void)
 {
-  // NOTE: assignments are safe regardless of struct declaration order
   tip_alert_source_info.id           = "twich_tip_alert";
   tip_alert_source_info.type         = OBS_SOURCE_TYPE_INPUT;
   tip_alert_source_info.output_flags = OBS_SOURCE_VIDEO;
@@ -651,7 +672,7 @@ void init_tip_alert_source_info(void)
   tip_alert_source_info.destroy        = tip_alert_destroy;
   tip_alert_source_info.get_width      = tip_alert_get_width;
   tip_alert_source_info.get_height     = tip_alert_get_height;
-  tip_alert_source_info.get_defaults   = tip_alert_defaults;   // defaults 0/10/50
+  tip_alert_source_info.get_defaults   = tip_alert_defaults;
   tip_alert_source_info.get_properties = tip_alert_properties;
   tip_alert_source_info.update         = tip_alert_update;
   tip_alert_source_info.video_tick     = tip_alert_tick;
