@@ -47,6 +47,8 @@ struct tip_alert_source
   // playback state
   bool playing = false;
   float time_left = 0.0f;
+
+  uint32_t text_color = 0x00FFFF00; // default yellow (0xRRGGBB)
 };
 
 extern struct obs_source_info tip_alert_source_info;

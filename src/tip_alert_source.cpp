@@ -1,6 +1,7 @@
 #include "tip_alert_source.hpp"
 
 #include <string>
+#include <cstdint>
 
 #include <obs-module.h>
 
@@ -39,6 +40,9 @@ static void tip_alert_defaults(obs_data_t* settings)
   obs_data_set_default_string(settings, "tier2_media", "");
   obs_data_set_default_string(settings, "tier3_media", "");
 
+  // Text color default (yellow) – Text (GDI+) expects 0xRRGGBB
+  obs_data_set_default_int(settings, "text_color", 0x00FFFF00);
+
   obs_data_set_default_double(settings, "duration", 3.0);
 }
 
@@ -53,7 +57,7 @@ static std::string get_setting_str(obs_source_t* src, const char* key)
 
 // Apply consistent styling to Text (GDI+)
 // IMPORTANT: text_gdiplus uses "color" (0xRRGGBB), NOT "color1".
-static void apply_tip_text_style(obs_data_t* d)
+static void apply_tip_text_style(obs_data_t* d, uint32_t color_rgb)
 {
   // Font: normal size (adjust if you want)
   obs_data_t* font = obs_data_create();
@@ -63,8 +67,8 @@ static void apply_tip_text_style(obs_data_t* d)
   obs_data_set_obj(d, "font", font);
   obs_data_release(font);
 
-  // Yellow text for text_gdiplus: 0xRRGGBB
-  obs_data_set_int(d, "color", 0x00FFFF00);
+  // Text (GDI+) color: 0xRRGGBB
+  obs_data_set_int(d, "color", (int)color_rgb);
 
   // Outline for readability
   obs_data_set_bool(d, "outline", true);
@@ -183,10 +187,8 @@ static void start_tdlib(tip_alert_source* s)
   s->tg.set_on_auth_state([s](const std::string& st) {
     if (!s || !s->source) return;
 
-    // Critical debug: proves UI callback is actually reached
     blog(LOG_INFO, "[TWICH] UI auth callback: %s", st.c_str());
 
-    // show raw + mapped (so you can see EXACT state string)
     std::string ui =
       std::string("TDLib state: ") + (st.empty() ? "(empty)" : st) + "\n" +
       format_auth_status(st);
@@ -206,7 +208,6 @@ static void start_tdlib(tip_alert_source* s)
     }
   );
 
-  // Set immediately (TDLib will overwrite as soon as it emits state)
   queue_auth_status_update(s->source, "Starting Telegram… (TDLib launching)", true);
 }
 
@@ -216,7 +217,7 @@ static void* tip_alert_create(obs_data_t* settings, obs_source_t* source)
   auto* s = new tip_alert_source();
   s->source = source;
 
-  // Tier settings (new)
+  // Tier settings
   s->tier1_threshold = obs_data_get_double(settings, "tier1_threshold");
   s->tier2_threshold = obs_data_get_double(settings, "tier2_threshold");
   s->tier3_threshold = obs_data_get_double(settings, "tier3_threshold");
@@ -230,10 +231,13 @@ static void* tip_alert_create(obs_data_t* settings, obs_source_t* source)
   s->tier2_media = obs_data_get_string(settings, "tier2_media");
   s->tier3_media = obs_data_get_string(settings, "tier3_media");
 
-  // Back-compat: if user hasn't configured tier1_media yet, reuse old key
+  // Back-compat
   s->animation_path = obs_data_get_string(settings, "animation");
   if (s->tier1_media.empty() && !s->animation_path.empty())
     s->tier1_media = s->animation_path;
+
+  // Text color from UI
+  s->text_color = (uint32_t)obs_data_get_int(settings, "text_color");
 
   s->duration_sec = (float)obs_data_get_double(settings, "duration");
 
@@ -241,7 +245,6 @@ static void* tip_alert_create(obs_data_t* settings, obs_source_t* source)
   s->tg_code  = obs_data_get_string(settings, "tg_code");
   s->tg_pass  = obs_data_get_string(settings, "tg_pass");
 
-  // Initial status value stored in settings
   obs_data_set_string(settings, "tg_auth_status", "Starting Telegram…");
   obs_source_update(source, settings);
 
@@ -253,7 +256,7 @@ static void tip_alert_destroy(void* data)
 {
   auto* s = (tip_alert_source*)data;
 
-  // IMPORTANT: remove active children before releasing
+  // remove active children before releasing
   if (s->source) {
     if (s->media) obs_source_remove_active_child(s->source, s->media);
     if (s->text)  obs_source_remove_active_child(s->source, s->text);
@@ -391,6 +394,7 @@ static obs_properties_t* tip_alert_properties(void* data)
   );
   obs_property_set_enabled(p_status, false);
 
+  // Telegram login UI
   obs_properties_add_text(props, "tg_phone", "Telegram phone", OBS_TEXT_DEFAULT);
   obs_properties_add_button(props, "tg_set_phone", "Set Phone", on_set_phone);
 
@@ -400,6 +404,7 @@ static obs_properties_t* tip_alert_properties(void* data)
   obs_properties_add_text(props, "tg_pass", "Telegram 2FA password (if enabled)", OBS_TEXT_PASSWORD);
   obs_properties_add_button(props, "tg_submit_pass", "Submit Password", on_submit_pass);
 
+  // Tiered animation settings
   obs_properties_t* media_grp = obs_properties_create();
   obs_properties_add_text(
     media_grp,
@@ -423,6 +428,9 @@ static obs_properties_t* tip_alert_properties(void* data)
 
   obs_properties_add_group(props, "tiered_media", "Alert Media (by Amount)", OBS_GROUP_NORMAL, media_grp);
 
+  // Text color picker (new)
+  obs_properties_add_color(props, "text_color", "Tip text color");
+
   obs_properties_add_float(
     props,
     "duration",
@@ -430,6 +438,7 @@ static obs_properties_t* tip_alert_properties(void* data)
     1.0, 10.0, 0.1
   );
 
+  // Test alert
   obs_properties_add_button(
     props,
     "test_alert",
@@ -448,6 +457,7 @@ static obs_properties_t* tip_alert_properties(void* data)
     }
   );
 
+  // --- Advanced group (creds + help) ---
   obs_properties_t* adv = obs_properties_create();
 
   obs_properties_add_text(
@@ -497,9 +507,13 @@ static void tip_alert_update(void* data, obs_data_t* settings)
   s->tier2_media = obs_data_get_string(settings, "tier2_media");
   s->tier3_media = obs_data_get_string(settings, "tier3_media");
 
+  // Back-compat
   s->animation_path = obs_data_get_string(settings, "animation");
   if (s->tier1_media.empty() && !s->animation_path.empty())
     s->tier1_media = s->animation_path;
+
+  // Text color from UI
+  s->text_color = (uint32_t)obs_data_get_int(settings, "text_color");
 
   s->duration_sec = (float)obs_data_get_double(settings, "duration");
 
@@ -579,7 +593,7 @@ static void tip_alert_tick(void* data, float seconds)
     obs_data_set_string(d, "text", "");
 
     // Apply style on creation
-    apply_tip_text_style(d);
+    apply_tip_text_style(d, s->text_color);
 
     s->text = obs_source_create("text_gdiplus", "tip_text", d, nullptr);
     obs_data_release(d);
@@ -598,8 +612,8 @@ static void tip_alert_tick(void* data, float seconds)
     obs_data_t* td = obs_source_get_settings(s->text);
     obs_data_set_string(td, "text", text.c_str());
 
-    // Force style every alert (fixes “white” + “huge”)
-    apply_tip_text_style(td);
+    // Force style every alert (keeps size/color consistent)
+    apply_tip_text_style(td, s->text_color);
 
     obs_source_update(s->text, td);
     obs_data_release(td);
@@ -666,7 +680,7 @@ void init_tip_alert_source_info(void)
   tip_alert_source_info.id           = "twich_tip_alert";
   tip_alert_source_info.type         = OBS_SOURCE_TYPE_INPUT;
   tip_alert_source_info.output_flags = OBS_SOURCE_VIDEO;
-
+  
   tip_alert_source_info.get_name       = tip_alert_get_name;
   tip_alert_source_info.create         = tip_alert_create;
   tip_alert_source_info.destroy        = tip_alert_destroy;
