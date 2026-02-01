@@ -16,7 +16,7 @@ struct tip_alert_source
 
   // --- settings / legacy ---
   std::string animation_path; // legacy key "animation"
-  float duration_sec = 3.0f;
+  float duration_sec = 8.9f;
 
   // --- Telegram ---
   TelegramTdLibClient tg;
