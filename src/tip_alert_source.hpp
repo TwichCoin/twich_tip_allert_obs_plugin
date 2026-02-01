@@ -50,12 +50,7 @@ struct tip_alert_source
   int text_size = 36;
   bool text_outline = true;
   int outline_size = 2;
-
-  // Dropdown selection (Arial/Segoe UI/Roboto)
   std::string font_face = "Arial";
-
-  // Optional override (verbatim face name, user-controlled)
-  std::string font_face_override;
 
   // position preset
   int text_position = 0; // 0=top 1=center 2=bottom
