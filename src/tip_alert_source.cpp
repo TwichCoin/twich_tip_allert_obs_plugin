@@ -29,7 +29,7 @@ static const char* tip_alert_get_name(void*)
 
 static void tip_alert_defaults(obs_data_t* settings)
 {
-  // Tier defaults (requested): something / 10 / 50
+  // Tier defaults (requested): 0 / 10 / 50
   obs_data_set_default_double(settings, "tier1_threshold", 0.0);
   obs_data_set_default_double(settings, "tier2_threshold", 10.0);
   obs_data_set_default_double(settings, "tier3_threshold", 50.0);
@@ -40,8 +40,12 @@ static void tip_alert_defaults(obs_data_t* settings)
   obs_data_set_default_string(settings, "tier2_media", "");
   obs_data_set_default_string(settings, "tier3_media", "");
 
-  // Text color default (yellow) – Text (GDI+) expects 0xRRGGBB
-  obs_data_set_default_int(settings, "text_color", 0x00FFFF00);
+  // Text styling defaults
+  // NOTE: text_gdiplus expects "color" as 0xRRGGBB
+  obs_data_set_default_int(settings,  "text_color",   0x00FFFF00); // yellow
+  obs_data_set_default_int(settings,  "text_size",    36);         // normal size
+  obs_data_set_default_bool(settings, "text_outline", true);
+  obs_data_set_default_int(settings,  "outline_size", 2);
 
   obs_data_set_default_double(settings, "duration", 3.0);
 }
@@ -56,24 +60,28 @@ static std::string get_setting_str(obs_source_t* src, const char* key)
 }
 
 // Apply consistent styling to Text (GDI+)
-// IMPORTANT: text_gdiplus uses "color" (0xRRGGBB), NOT "color1".
-static void apply_tip_text_style(obs_data_t* d, uint32_t color_rgb)
+static void apply_tip_text_style(
+  obs_data_t* d,
+  uint32_t color_rgb,
+  int text_size,
+  bool outline_enabled,
+  int outline_size)
 {
-  // Font: normal size (adjust if you want)
+  // Font
   obs_data_t* font = obs_data_create();
   obs_data_set_string(font, "face", "Arial"); // or "Segoe UI"
-  obs_data_set_int(font, "size", 36);         // normal sized; try 28-42
+  obs_data_set_int(font, "size", text_size);
   obs_data_set_int(font, "flags", 0);         // regular
   obs_data_set_obj(d, "font", font);
   obs_data_release(font);
 
-  // Text (GDI+) color: 0xRRGGBB
+  // Color: 0xRRGGBB (GDI+ text source)
   obs_data_set_int(d, "color", (int)color_rgb);
 
-  // Outline for readability
-  obs_data_set_bool(d, "outline", true);
-  obs_data_set_int(d, "outline_size", 2);
-  obs_data_set_int(d, "outline_color", 0x000000); // black
+  // Outline
+  obs_data_set_bool(d, "outline", outline_enabled);
+  obs_data_set_int(d, "outline_size", outline_enabled ? outline_size : 0);
+  obs_data_set_int(d, "outline_color", 0x000000); // black (0xRRGGBB)
 
   // Align to avoid weird defaults
   obs_data_set_int(d, "align", 0);   // left
@@ -128,7 +136,6 @@ static void ui_set_auth_status(void* param)
 
     obs_data_release(d);
 
-    // Force Properties dialog repaint (safe: UI thread, not inside get_properties())
     if (t->refresh_props) {
       obs_source_update_properties(t->source);
     }
@@ -183,7 +190,6 @@ static void start_tdlib(tip_alert_source* s)
 
   s->tg.set_allowed_bot_username("EddieLives_bot");
 
-  // TDLib thread -> UI thread
   s->tg.set_on_auth_state([s](const std::string& st) {
     if (!s || !s->source) return;
 
@@ -217,7 +223,6 @@ static void* tip_alert_create(obs_data_t* settings, obs_source_t* source)
   auto* s = new tip_alert_source();
   s->source = source;
 
-  // Tier settings
   s->tier1_threshold = obs_data_get_double(settings, "tier1_threshold");
   s->tier2_threshold = obs_data_get_double(settings, "tier2_threshold");
   s->tier3_threshold = obs_data_get_double(settings, "tier3_threshold");
@@ -231,13 +236,15 @@ static void* tip_alert_create(obs_data_t* settings, obs_source_t* source)
   s->tier2_media = obs_data_get_string(settings, "tier2_media");
   s->tier3_media = obs_data_get_string(settings, "tier3_media");
 
-  // Back-compat
   s->animation_path = obs_data_get_string(settings, "animation");
   if (s->tier1_media.empty() && !s->animation_path.empty())
     s->tier1_media = s->animation_path;
 
-  // Text color from UI
-  s->text_color = (uint32_t)obs_data_get_int(settings, "text_color");
+  // Text styling from UI
+  s->text_color    = (uint32_t)obs_data_get_int(settings, "text_color");
+  s->text_size     = (int)obs_data_get_int(settings, "text_size");
+  s->text_outline  = obs_data_get_bool(settings, "text_outline");
+  s->outline_size  = (int)obs_data_get_int(settings, "outline_size");
 
   s->duration_sec = (float)obs_data_get_double(settings, "duration");
 
@@ -256,7 +263,6 @@ static void tip_alert_destroy(void* data)
 {
   auto* s = (tip_alert_source*)data;
 
-  // remove active children before releasing
   if (s->source) {
     if (s->media) obs_source_remove_active_child(s->source, s->media);
     if (s->text)  obs_source_remove_active_child(s->source, s->text);
@@ -428,8 +434,11 @@ static obs_properties_t* tip_alert_properties(void* data)
 
   obs_properties_add_group(props, "tiered_media", "Alert Media (by Amount)", OBS_GROUP_NORMAL, media_grp);
 
-  // Text color picker (new)
+  // Text style controls (NEW)
   obs_properties_add_color(props, "text_color", "Tip text color");
+  obs_properties_add_int(props, "text_size", "Tip text size", 16, 96, 1);
+  obs_properties_add_bool(props, "text_outline", "Text outline");
+  obs_properties_add_int(props, "outline_size", "Outline size", 0, 10, 1);
 
   obs_properties_add_float(
     props,
@@ -460,12 +469,7 @@ static obs_properties_t* tip_alert_properties(void* data)
   // --- Advanced group (creds + help) ---
   obs_properties_t* adv = obs_properties_create();
 
-  obs_properties_add_text(
-    adv,
-    "tg_api_help_title",
-    "Telegram API credentials (required)",
-    OBS_TEXT_INFO
-  );
+  obs_properties_add_text(adv, "tg_api_help_title", "Telegram API credentials (required)", OBS_TEXT_INFO);
 
   obs_properties_add_text(
     adv,
@@ -494,6 +498,7 @@ static obs_properties_t* tip_alert_properties(void* data)
 static void tip_alert_update(void* data, obs_data_t* settings)
 {
   auto* s = (tip_alert_source*)data;
+
   s->tier1_threshold = obs_data_get_double(settings, "tier1_threshold");
   s->tier2_threshold = obs_data_get_double(settings, "tier2_threshold");
   s->tier3_threshold = obs_data_get_double(settings, "tier3_threshold");
@@ -507,13 +512,15 @@ static void tip_alert_update(void* data, obs_data_t* settings)
   s->tier2_media = obs_data_get_string(settings, "tier2_media");
   s->tier3_media = obs_data_get_string(settings, "tier3_media");
 
-  // Back-compat
   s->animation_path = obs_data_get_string(settings, "animation");
   if (s->tier1_media.empty() && !s->animation_path.empty())
     s->tier1_media = s->animation_path;
 
-  // Text color from UI
-  s->text_color = (uint32_t)obs_data_get_int(settings, "text_color");
+  // Text style updates live
+  s->text_color    = (uint32_t)obs_data_get_int(settings, "text_color");
+  s->text_size     = (int)obs_data_get_int(settings, "text_size");
+  s->text_outline  = obs_data_get_bool(settings, "text_outline");
+  s->outline_size  = (int)obs_data_get_int(settings, "outline_size");
 
   s->duration_sec = (float)obs_data_get_double(settings, "duration");
 
@@ -588,12 +595,12 @@ static void tip_alert_tick(void* data, float seconds)
     }
   }
 
+  // Ensure text source exists
   if (!s->text) {
     obs_data_t* d = obs_data_create();
     obs_data_set_string(d, "text", "");
 
-    // Apply style on creation
-    apply_tip_text_style(d, s->text_color);
+    apply_tip_text_style(d, s->text_color, s->text_size, s->text_outline, s->outline_size);
 
     s->text = obs_source_create("text_gdiplus", "tip_text", d, nullptr);
     obs_data_release(d);
@@ -612,8 +619,8 @@ static void tip_alert_tick(void* data, float seconds)
     obs_data_t* td = obs_source_get_settings(s->text);
     obs_data_set_string(td, "text", text.c_str());
 
-    // Force style every alert (keeps size/color consistent)
-    apply_tip_text_style(td, s->text_color);
+    // Force style every alert
+    apply_tip_text_style(td, s->text_color, s->text_size, s->text_outline, s->outline_size);
 
     obs_source_update(s->text, td);
     obs_data_release(td);
@@ -680,7 +687,7 @@ void init_tip_alert_source_info(void)
   tip_alert_source_info.id           = "twich_tip_alert";
   tip_alert_source_info.type         = OBS_SOURCE_TYPE_INPUT;
   tip_alert_source_info.output_flags = OBS_SOURCE_VIDEO;
-  
+
   tip_alert_source_info.get_name       = tip_alert_get_name;
   tip_alert_source_info.create         = tip_alert_create;
   tip_alert_source_info.destroy        = tip_alert_destroy;

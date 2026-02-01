@@ -5,6 +5,7 @@
 #include <mutex>
 #include <queue>
 #include <string>
+#include <cstdint>
 
 #include "event_parse.hpp"
 #include "telegram_tdlib.hpp"
@@ -49,6 +50,9 @@ struct tip_alert_source
   float time_left = 0.0f;
 
   uint32_t text_color = 0x00FFFF00; // default yellow (0xRRGGBB)
+  int      text_size = 36;
+  bool     text_outline = true;
+  int      outline_size = 2;
 };
 
 extern struct obs_source_info tip_alert_source_info;
