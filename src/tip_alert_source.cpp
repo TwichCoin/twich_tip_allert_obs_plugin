@@ -46,7 +46,10 @@ static void tip_alert_defaults(obs_data_t* settings)
   obs_data_set_default_int(settings,  "text_size",    36);
   obs_data_set_default_bool(settings, "text_outline", true);
   obs_data_set_default_int(settings,  "outline_size", 2);
+
+  // Font dropdown + override
   obs_data_set_default_string(settings, "font_face", "Arial");
+  obs_data_set_default_string(settings, "font_face_override", "");
 
   obs_data_set_default_int(settings, "text_position", 0); // top
   obs_data_set_default_int(settings, "text_margin", 40);
@@ -60,7 +63,8 @@ static void tip_alert_defaults(obs_data_t* settings)
     "{user} tipped {amount} {symbol}\n{message}"
   );
 
-  obs_data_set_default_double(settings, "duration", 3.0);
+  // Match your header's default better
+  obs_data_set_default_double(settings, "duration", 8.9);
 }
 
 // Read a string from current source settings (works even before user clicks OK)
@@ -95,6 +99,14 @@ static std::string format_tip_text(const tip_alert_source* s, const TipEvent& ev
   replace_all(out, "{message}", ev.message);
 
   return out;
+}
+
+static std::string effective_font_face(const tip_alert_source* s)
+{
+  if (!s) return "Arial";
+  if (!s->font_face_override.empty())
+    return s->font_face_override;
+  return s->font_face.empty() ? std::string("Arial") : s->font_face;
 }
 
 // Apply consistent styling to Text (GDI+)
@@ -305,7 +317,9 @@ static void* tip_alert_create(obs_data_t* settings, obs_source_t* source)
   s->text_size     = (int)obs_data_get_int(settings, "text_size");
   s->text_outline  = obs_data_get_bool(settings, "text_outline");
   s->outline_size  = (int)obs_data_get_int(settings, "outline_size");
-  s->font_face     = obs_data_get_string(settings, "font_face");
+
+  s->font_face          = obs_data_get_string(settings, "font_face");
+  s->font_face_override = obs_data_get_string(settings, "font_face_override");
 
   s->text_position = (int)obs_data_get_int(settings, "text_position");
   s->text_margin   = (int)obs_data_get_int(settings, "text_margin");
@@ -522,6 +536,21 @@ static obs_properties_t* tip_alert_properties(void* data)
   obs_property_list_add_string(p_font, "Segoe UI", "Segoe UI");
   obs_property_list_add_string(p_font, "Roboto", "Roboto");
 
+  // NEW: user override for exact face name (no fallback)
+  obs_properties_add_text(
+    props,
+    "font_face_override",
+    "Font face override (optional)",
+    OBS_TEXT_DEFAULT
+  );
+  obs_properties_add_text(
+    props,
+    "font_face_override_help",
+    "Tip: use this if the installed font name is not exactly the dropdown value.\n"
+    "Examples: \"Roboto Medium\", \"Roboto Condensed\", \"Roboto Regular\".",
+    OBS_TEXT_INFO
+  );
+
   obs_properties_add_bool(props, "text_outline", "Text outline");
   obs_properties_add_int(props, "outline_size", "Outline size", 0, 10, 1);
 
@@ -547,7 +576,7 @@ static obs_properties_t* tip_alert_properties(void* data)
     props,
     "duration",
     "Alert Duration (seconds)",
-    1.0, 10.0, 0.1
+    1.0, 20.0, 0.1
   );
 
   // Test alert
@@ -631,7 +660,9 @@ static void tip_alert_update(void* data, obs_data_t* settings)
   s->text_size     = (int)obs_data_get_int(settings, "text_size");
   s->text_outline  = obs_data_get_bool(settings, "text_outline");
   s->outline_size  = (int)obs_data_get_int(settings, "outline_size");
-  s->font_face     = obs_data_get_string(settings, "font_face");
+
+  s->font_face          = obs_data_get_string(settings, "font_face");
+  s->font_face_override = obs_data_get_string(settings, "font_face_override");
 
   s->text_position = (int)obs_data_get_int(settings, "text_position");
   s->text_margin   = (int)obs_data_get_int(settings, "text_margin");
@@ -728,12 +759,14 @@ static void tip_alert_tick(void* data, float seconds)
     }
   }
 
+  const std::string face = effective_font_face(s);
+
   // text child
   if (!s->text) {
     obs_data_t* d = obs_data_create();
     obs_data_set_string(d, "text", "");
 
-    apply_tip_text_style(d, s->text_color, s->font_face, s->text_size, s->text_outline, s->outline_size);
+    apply_tip_text_style(d, s->text_color, face, s->text_size, s->text_outline, s->outline_size);
 
     s->text = obs_source_create("text_gdiplus", "tip_text", d, nullptr);
     obs_data_release(d);
@@ -748,8 +781,8 @@ static void tip_alert_tick(void* data, float seconds)
     const std::string txt = format_tip_text(s, ev);
     obs_data_set_string(td, "text", txt.c_str());
 
-    // force style each alert (so it never "reverts")
-    apply_tip_text_style(td, s->text_color, s->font_face, s->text_size, s->text_outline, s->outline_size);
+    // force style each alert
+    apply_tip_text_style(td, s->text_color, face, s->text_size, s->text_outline, s->outline_size);
 
     // start faded if fade-in enabled
     obs_data_set_int(td, "opacity", (s->text_fade_in > 0.0f) ? 0 : 100);
