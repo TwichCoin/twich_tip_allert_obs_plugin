@@ -1,9 +1,10 @@
 #include "tip_alert_source.hpp"
 
-#include <string>
 #include <cstdint>
+#include <string>
 
 #include <obs-module.h>
+#include <graphics/graphics.h>
 
 #include "config.hpp"
 #include "event_parse.hpp"
@@ -29,23 +30,35 @@ static const char* tip_alert_get_name(void*)
 
 static void tip_alert_defaults(obs_data_t* settings)
 {
-  // Tier defaults (requested): 0 / 10 / 50
+  // Tier defaults
   obs_data_set_default_double(settings, "tier1_threshold", 0.0);
   obs_data_set_default_double(settings, "tier2_threshold", 10.0);
   obs_data_set_default_double(settings, "tier3_threshold", 50.0);
 
-  // Keep legacy keys sane too
+  // Legacy + tier media
   obs_data_set_default_string(settings, "animation", "");
   obs_data_set_default_string(settings, "tier1_media", "");
   obs_data_set_default_string(settings, "tier2_media", "");
   obs_data_set_default_string(settings, "tier3_media", "");
 
-  // Text styling defaults
-  // NOTE: text_gdiplus expects "color" as 0xRRGGBB
-  obs_data_set_default_int(settings,  "text_color",   0x00FFFF00); // yellow
-  obs_data_set_default_int(settings,  "text_size",    36);         // normal size
+  // Text UI defaults
+  obs_data_set_default_int(settings,  "text_color",   0x00FFFF00); // yellow (0xRRGGBB)
+  obs_data_set_default_int(settings,  "text_size",    36);
   obs_data_set_default_bool(settings, "text_outline", true);
   obs_data_set_default_int(settings,  "outline_size", 2);
+  obs_data_set_default_string(settings, "font_face", "Arial");
+
+  obs_data_set_default_int(settings, "text_position", 0); // top
+  obs_data_set_default_int(settings, "text_margin", 40);
+
+  obs_data_set_default_double(settings, "text_fade_in",  0.20);
+  obs_data_set_default_double(settings, "text_fade_out", 0.25);
+
+  obs_data_set_default_string(
+    settings,
+    "text_template",
+    "{user} tipped {amount} {symbol}\n{message}"
+  );
 
   obs_data_set_default_double(settings, "duration", 3.0);
 }
@@ -59,33 +72,76 @@ static std::string get_setting_str(obs_source_t* src, const char* key)
   return v;
 }
 
+// ---- template helpers ----
+static void replace_all(std::string& s, const std::string& from, const std::string& to)
+{
+  if (from.empty()) return;
+  size_t pos = 0;
+  while ((pos = s.find(from, pos)) != std::string::npos) {
+    s.replace(pos, from.size(), to);
+    pos += to.size();
+  }
+}
+
+static std::string format_tip_text(const tip_alert_source* s, const TipEvent& ev)
+{
+  std::string out = s->text_template.empty()
+    ? std::string("{user} tipped {amount} {symbol}\n{message}")
+    : s->text_template;
+
+  replace_all(out, "{user}", ev.from_username);
+  replace_all(out, "{amount}", ev.amount_str);
+  replace_all(out, "{symbol}", ev.symbol);
+  replace_all(out, "{message}", ev.message);
+
+  return out;
+}
+
 // Apply consistent styling to Text (GDI+)
 static void apply_tip_text_style(
   obs_data_t* d,
   uint32_t color_rgb,
+  const std::string& face,
   int text_size,
   bool outline_enabled,
   int outline_size)
 {
-  // Font
   obs_data_t* font = obs_data_create();
-  obs_data_set_string(font, "face", "Arial"); // or "Segoe UI"
+  obs_data_set_string(font, "face", face.empty() ? "Arial" : face.c_str());
   obs_data_set_int(font, "size", text_size);
-  obs_data_set_int(font, "flags", 0);         // regular
+  obs_data_set_int(font, "flags", 0);
   obs_data_set_obj(d, "font", font);
   obs_data_release(font);
 
-  // Color: 0xRRGGBB (GDI+ text source)
+  // color is 0xRRGGBB for text_gdiplus
   obs_data_set_int(d, "color", (int)color_rgb);
 
-  // Outline
   obs_data_set_bool(d, "outline", outline_enabled);
   obs_data_set_int(d, "outline_size", outline_enabled ? outline_size : 0);
-  obs_data_set_int(d, "outline_color", 0x000000); // black (0xRRGGBB)
+  obs_data_set_int(d, "outline_color", 0x000000); // black 0xRRGGBB
 
-  // Align to avoid weird defaults
-  obs_data_set_int(d, "align", 0);   // left
-  obs_data_set_int(d, "valign", 0);  // top
+  // align left/top
+  obs_data_set_int(d, "align", 0);
+  obs_data_set_int(d, "valign", 0);
+}
+
+// Update only opacity for fade
+static void set_text_opacity(tip_alert_source* s, int opacity_0_100)
+{
+  if (!s || !s->text) return;
+
+  if (opacity_0_100 < 0) opacity_0_100 = 0;
+  if (opacity_0_100 > 100) opacity_0_100 = 100;
+
+  if (s->last_opacity == opacity_0_100)
+    return;
+
+  obs_data_t* td = obs_source_get_settings(s->text);
+  obs_data_set_int(td, "opacity", opacity_0_100);
+  obs_source_update(s->text, td);
+  obs_data_release(td);
+
+  s->last_opacity = opacity_0_100;
 }
 
 // ---------- Status formatting ----------
@@ -190,6 +246,7 @@ static void start_tdlib(tip_alert_source* s)
 
   s->tg.set_allowed_bot_username("EddieLives_bot");
 
+  // TDLib thread -> UI thread auth state callback
   s->tg.set_on_auth_state([s](const std::string& st) {
     if (!s || !s->source) return;
 
@@ -202,6 +259,7 @@ static void start_tdlib(tip_alert_source* s)
     queue_auth_status_update(s->source, ui, true);
   });
 
+  // Start TDLib and parse incoming messages into TipEvent queue
   s->tg.start(
     creds.api_id,
     creds.api_hash,
@@ -223,6 +281,7 @@ static void* tip_alert_create(obs_data_t* settings, obs_source_t* source)
   auto* s = new tip_alert_source();
   s->source = source;
 
+  // tiers
   s->tier1_threshold = obs_data_get_double(settings, "tier1_threshold");
   s->tier2_threshold = obs_data_get_double(settings, "tier2_threshold");
   s->tier3_threshold = obs_data_get_double(settings, "tier3_threshold");
@@ -236,22 +295,34 @@ static void* tip_alert_create(obs_data_t* settings, obs_source_t* source)
   s->tier2_media = obs_data_get_string(settings, "tier2_media");
   s->tier3_media = obs_data_get_string(settings, "tier3_media");
 
+  // legacy
   s->animation_path = obs_data_get_string(settings, "animation");
   if (s->tier1_media.empty() && !s->animation_path.empty())
     s->tier1_media = s->animation_path;
 
-  // Text styling from UI
+  // text config
   s->text_color    = (uint32_t)obs_data_get_int(settings, "text_color");
   s->text_size     = (int)obs_data_get_int(settings, "text_size");
   s->text_outline  = obs_data_get_bool(settings, "text_outline");
   s->outline_size  = (int)obs_data_get_int(settings, "outline_size");
+  s->font_face     = obs_data_get_string(settings, "font_face");
+
+  s->text_position = (int)obs_data_get_int(settings, "text_position");
+  s->text_margin   = (int)obs_data_get_int(settings, "text_margin");
+
+  s->text_fade_in  = (float)obs_data_get_double(settings, "text_fade_in");
+  s->text_fade_out = (float)obs_data_get_double(settings, "text_fade_out");
+
+  s->text_template = obs_data_get_string(settings, "text_template");
 
   s->duration_sec = (float)obs_data_get_double(settings, "duration");
 
+  // telegram fields
   s->tg_phone = obs_data_get_string(settings, "tg_phone");
   s->tg_code  = obs_data_get_string(settings, "tg_code");
   s->tg_pass  = obs_data_get_string(settings, "tg_pass");
 
+  // Initial status value stored in settings
   obs_data_set_string(settings, "tg_auth_status", "Starting Telegram…");
   obs_source_update(source, settings);
 
@@ -263,6 +334,7 @@ static void tip_alert_destroy(void* data)
 {
   auto* s = (tip_alert_source*)data;
 
+  // remove active children before releasing
   if (s->source) {
     if (s->media) obs_source_remove_active_child(s->source, s->media);
     if (s->text)  obs_source_remove_active_child(s->source, s->text);
@@ -350,7 +422,7 @@ static bool on_submit_pass(obs_properties_t*, obs_property_t*, void* data)
   return true;
 }
 
-// -------------------- Credentials UI (Save only; OBS per-field reveal) --------------------
+// -------------------- Credentials UI (Save only) --------------------
 static bool on_save_creds(obs_properties_t*, obs_property_t*, void* data)
 {
   auto* s = (tip_alert_source*)data;
@@ -392,6 +464,7 @@ static obs_properties_t* tip_alert_properties(void* data)
 {
   obs_properties_t* props = obs_properties_create();
 
+  // Read-only status box
   obs_property_t* p_status = obs_properties_add_text(
     props,
     "tg_auth_status",
@@ -434,11 +507,41 @@ static obs_properties_t* tip_alert_properties(void* data)
 
   obs_properties_add_group(props, "tiered_media", "Alert Media (by Amount)", OBS_GROUP_NORMAL, media_grp);
 
-  // Text style controls (NEW)
+  // Text config
   obs_properties_add_color(props, "text_color", "Tip text color");
   obs_properties_add_int(props, "text_size", "Tip text size", 16, 96, 1);
+
+  obs_property_t* p_font = obs_properties_add_list(
+    props,
+    "font_face",
+    "Tip font",
+    OBS_COMBO_TYPE_LIST,
+    OBS_COMBO_FORMAT_STRING
+  );
+  obs_property_list_add_string(p_font, "Arial", "Arial");
+  obs_property_list_add_string(p_font, "Segoe UI", "Segoe UI");
+  obs_property_list_add_string(p_font, "Roboto", "Roboto");
+
   obs_properties_add_bool(props, "text_outline", "Text outline");
   obs_properties_add_int(props, "outline_size", "Outline size", 0, 10, 1);
+
+  obs_property_t* p_pos = obs_properties_add_list(
+    props,
+    "text_position",
+    "Text position",
+    OBS_COMBO_TYPE_LIST,
+    OBS_COMBO_FORMAT_INT
+  );
+  obs_property_list_add_int(p_pos, "Top", 0);
+  obs_property_list_add_int(p_pos, "Center", 1);
+  obs_property_list_add_int(p_pos, "Bottom", 2);
+
+  obs_properties_add_int(props, "text_margin", "Text margin (px)", 0, 400, 1);
+
+  obs_properties_add_float(props, "text_fade_in",  "Text fade-in (sec)",  0.0, 5.0, 0.05);
+  obs_properties_add_float(props, "text_fade_out", "Text fade-out (sec)", 0.0, 5.0, 0.05);
+
+  obs_properties_add_text(props, "text_template", "Text template", OBS_TEXT_MULTILINE);
 
   obs_properties_add_float(
     props,
@@ -455,9 +558,9 @@ static obs_properties_t* tip_alert_properties(void* data)
     [](obs_properties_t*, obs_property_t*, void* data2) {
       auto* s = (tip_alert_source*)data2;
       TipEvent ev;
-      ev.amount_str = "0.200";
+      ev.amount_str = "12.500";
       ev.symbol = "TWICH";
-      ev.message = "Test tip";
+      ev.message = "Test tip message";
       ev.from_username = "tester";
       ev.dedupe_key = "test";
       std::lock_guard<std::mutex> lk(s->queue_mutex);
@@ -466,10 +569,15 @@ static obs_properties_t* tip_alert_properties(void* data)
     }
   );
 
-  // --- Advanced group (creds + help) ---
+  // Advanced group (creds + help)
   obs_properties_t* adv = obs_properties_create();
 
-  obs_properties_add_text(adv, "tg_api_help_title", "Telegram API credentials (required)", OBS_TEXT_INFO);
+  obs_properties_add_text(
+    adv,
+    "tg_api_help_title",
+    "Telegram API credentials (required)",
+    OBS_TEXT_INFO
+  );
 
   obs_properties_add_text(
     adv,
@@ -499,6 +607,7 @@ static void tip_alert_update(void* data, obs_data_t* settings)
 {
   auto* s = (tip_alert_source*)data;
 
+  // tiers
   s->tier1_threshold = obs_data_get_double(settings, "tier1_threshold");
   s->tier2_threshold = obs_data_get_double(settings, "tier2_threshold");
   s->tier3_threshold = obs_data_get_double(settings, "tier3_threshold");
@@ -512,30 +621,58 @@ static void tip_alert_update(void* data, obs_data_t* settings)
   s->tier2_media = obs_data_get_string(settings, "tier2_media");
   s->tier3_media = obs_data_get_string(settings, "tier3_media");
 
+  // legacy
   s->animation_path = obs_data_get_string(settings, "animation");
   if (s->tier1_media.empty() && !s->animation_path.empty())
     s->tier1_media = s->animation_path;
 
-  // Text style updates live
+  // text
   s->text_color    = (uint32_t)obs_data_get_int(settings, "text_color");
   s->text_size     = (int)obs_data_get_int(settings, "text_size");
   s->text_outline  = obs_data_get_bool(settings, "text_outline");
   s->outline_size  = (int)obs_data_get_int(settings, "outline_size");
+  s->font_face     = obs_data_get_string(settings, "font_face");
 
-  s->duration_sec = (float)obs_data_get_double(settings, "duration");
+  s->text_position = (int)obs_data_get_int(settings, "text_position");
+  s->text_margin   = (int)obs_data_get_int(settings, "text_margin");
+
+  s->text_fade_in  = (float)obs_data_get_double(settings, "text_fade_in");
+  s->text_fade_out = (float)obs_data_get_double(settings, "text_fade_out");
+
+  s->text_template = obs_data_get_string(settings, "text_template");
+
+  s->duration_sec  = (float)obs_data_get_double(settings, "duration");
 
   s->tg_phone = obs_data_get_string(settings, "tg_phone");
   s->tg_code  = obs_data_get_string(settings, "tg_code");
   s->tg_pass  = obs_data_get_string(settings, "tg_pass");
 }
 
-// -------------------- Video/render --------------------
+// -------------------- Tick/render --------------------
 static void tip_alert_tick(void* data, float seconds)
 {
   auto* s = (tip_alert_source*)data;
 
   if (s->playing) {
+    s->alert_elapsed += seconds;
     s->time_left -= seconds;
+
+    // fade alpha
+    float alpha = 1.0f;
+
+    if (s->text_fade_in > 0.0f && s->alert_elapsed < s->text_fade_in)
+      alpha = s->alert_elapsed / s->text_fade_in;
+
+    if (s->text_fade_out > 0.0f && s->time_left < s->text_fade_out) {
+      float a2 = s->time_left / s->text_fade_out;
+      if (a2 < alpha) alpha = a2;
+    }
+
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+
+    set_text_opacity(s, (int)(alpha * 100.0f));
+
     if (s->time_left <= 0.0f) {
       s->playing = false;
       if (s->media) obs_source_set_enabled(s->media, false);
@@ -553,14 +690,10 @@ static void tip_alert_tick(void* data, float seconds)
     s->queue.pop();
   }
 
-  // Pick which media to play based on configured thresholds
+  // choose media for this event
   const std::string* chosen_media = nullptr;
   double amount = 0.0;
-  try {
-    amount = std::stod(ev.amount_str);
-  } catch (...) {
-    amount = 0.0;
-  }
+  try { amount = std::stod(ev.amount_str); } catch (...) { amount = 0.0; }
 
   if (amount >= s->tier3_threshold && !s->tier3_media.empty())
     chosen_media = &s->tier3_media;
@@ -569,7 +702,7 @@ static void tip_alert_tick(void* data, float seconds)
   else if (amount >= s->tier1_threshold && !s->tier1_media.empty())
     chosen_media = &s->tier1_media;
 
-  // Create/update child media source lazily
+  // media child
   if (chosen_media && !chosen_media->empty()) {
     if (!s->media) {
       obs_data_t* d = obs_data_create();
@@ -595,12 +728,12 @@ static void tip_alert_tick(void* data, float seconds)
     }
   }
 
-  // Ensure text source exists
+  // text child
   if (!s->text) {
     obs_data_t* d = obs_data_create();
     obs_data_set_string(d, "text", "");
 
-    apply_tip_text_style(d, s->text_color, s->text_size, s->text_outline, s->outline_size);
+    apply_tip_text_style(d, s->text_color, s->font_face, s->text_size, s->text_outline, s->outline_size);
 
     s->text = obs_source_create("text_gdiplus", "tip_text", d, nullptr);
     obs_data_release(d);
@@ -609,30 +742,30 @@ static void tip_alert_tick(void* data, float seconds)
       obs_source_add_active_child(s->source, s->text);
   }
 
-  // Update text (always include TWICH TIP label)
-  std::string text =
-    "TWICH TIP\n"
-    "+" + ev.amount_str + " " + ev.symbol + "\n" +
-    ev.message;
-
   if (s->text) {
     obs_data_t* td = obs_source_get_settings(s->text);
-    obs_data_set_string(td, "text", text.c_str());
 
-    // Force style every alert
-    apply_tip_text_style(td, s->text_color, s->text_size, s->text_outline, s->outline_size);
+    const std::string txt = format_tip_text(s, ev);
+    obs_data_set_string(td, "text", txt.c_str());
+
+    // force style each alert (so it never "reverts")
+    apply_tip_text_style(td, s->text_color, s->font_face, s->text_size, s->text_outline, s->outline_size);
+
+    // start faded if fade-in enabled
+    obs_data_set_int(td, "opacity", (s->text_fade_in > 0.0f) ? 0 : 100);
 
     obs_source_update(s->text, td);
     obs_data_release(td);
+
+    s->last_opacity = -1;
   }
 
-  // Restart animation ONLY if we matched a tier this event.
+  // play media only if chosen this event (avoid sticky old tier)
   if (chosen_media && !chosen_media->empty() && s->media) {
     obs_source_set_enabled(s->media, true);
     obs_source_media_restart(s->media);
   } else {
-    if (s->media)
-      obs_source_set_enabled(s->media, false);
+    if (s->media) obs_source_set_enabled(s->media, false);
   }
 
   if (s->text)
@@ -640,8 +773,10 @@ static void tip_alert_tick(void* data, float seconds)
 
   s->playing = true;
   s->time_left = s->duration_sec;
+  s->alert_elapsed = 0.0f;
 }
 
+// sizing
 static uint32_t tip_alert_get_width(void* data)
 {
   auto* s = (tip_alert_source*)data;
@@ -670,16 +805,48 @@ static uint32_t tip_alert_get_height(void* data)
   return 1080;
 }
 
+static void render_child_at(obs_source_t* child, float x, float y)
+{
+  if (!child) return;
+  gs_matrix_push();
+  gs_matrix_translate3f(x, y, 0.0f);
+  obs_source_video_render(child);
+  gs_matrix_pop();
+}
+
 static void tip_alert_render(void* data, gs_effect_t*)
 {
   auto* s = (tip_alert_source*)data;
   if (!s->playing) return;
 
-  if (s->media) obs_source_video_render(s->media);
-  if (s->text)  obs_source_video_render(s->text);
+  if (s->media)
+    obs_source_video_render(s->media);
+
+  if (s->text) {
+    const uint32_t W = tip_alert_get_width(data);
+    const uint32_t H = tip_alert_get_height(data);
+
+    const uint32_t tw = obs_source_get_width(s->text);
+    const uint32_t th = obs_source_get_height(s->text);
+
+    float x = (tw > 0 && W > tw) ? (float)(W - tw) * 0.5f : 0.0f;
+    float y = 0.0f;
+
+    if (s->text_position == 0) {          // top
+      y = (float)s->text_margin;
+    } else if (s->text_position == 1) {   // center
+      y = (th > 0 && H > th) ? (float)(H - th) * 0.5f : 0.0f;
+    } else {                               // bottom
+      y = (th > 0 && H > th) ? (float)(H - th - s->text_margin) : 0.0f;
+    }
+
+    render_child_at(s->text, x, y);
+  }
 }
 
-// Exported source info
+// ------------------------------------------------------------
+// Exported source info: safe init via assignments (no MSVC C7560)
+// ------------------------------------------------------------
 obs_source_info tip_alert_source_info = {};
 
 void init_tip_alert_source_info(void)
