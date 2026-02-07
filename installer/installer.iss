@@ -9,6 +9,7 @@ DisableProgramGroupPage=yes
 CreateAppDir=no
 Uninstallable=yes
 OutputBaseFilename=TWICH_Tip_Alert_Setup
+UninstallDisplayIcon={app}\obs-plugins\64bit\twich_tip_alert.dll
 Compression=lzma
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
