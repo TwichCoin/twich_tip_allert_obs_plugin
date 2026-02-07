@@ -6,7 +6,7 @@ Real-time TWICHCOIN tipping alerts for OBS Studio, powered by Telegram's EddieLi
 
 ## ✨ Overview
 
-TWICH Tip Alert is an OBS Studio plugin that displays real-time on-stream alerts for TWICHCOIN (SUI token) tips received via Telegram. It listens to messages from EddieLives_bot (the official TWICHCOIN tipping and faucet service) and renders customizable alerts directly within OBS.
+TWICH Tip Alert is an OBS Studio plugin that displays real-time on-stream alerts for TWICHCOIN (powered by SUI blockchain) tips received via Telegram. TWICHCOIN is the official tipping token for streamers ([twichcoin.org](https://twichcoin.org)).
 
 **Key Features:**
 - 🎥 **Tier-based WebM animations** (3 configurable tiers)
@@ -24,16 +24,14 @@ TWICH Tip Alert is an OBS Studio plugin that displays real-time on-stream alerts
 - Telegram API credentials (free)
 
 ### Installation Steps
-1. **Download** the latest installer from [Releases](https://github.com/yourusername/twitch_tip_alert_obs_plugin/releases)
+1. **Download** the latest installer from [Releases](https://github.com/TwichCoin/twich_tip_allert_obs_plugin/releases)
 2. **Close OBS Studio** (important!)
 3. **Run** `TWICH_Tip_Alert_Setup.exe`
 4. The installer will automatically place files in `obs-studio\obs-plugins\64bit`
 5. Launch OBS Studio
 6. Add a new source: **Sources → + → TWICH Tip Alerts (Telegram)**
 
-## 🔐 Telegram Setup (Required)
-
-This plugin uses your own Telegram session for security.
+## 🔐 Complete Setup Guide
 
 ### Step 1: Get Telegram API Credentials
 1. Visit [https://my.telegram.org](https://my.telegram.org)
@@ -50,6 +48,55 @@ This plugin uses your own Telegram session for security.
    - Enter verification code
    - Enter 2FA password (if enabled)
 5. Status will show **READY (logged in)** when successful
+
+### Step 3: Register with EddieLives_bot & Set Up Wallet
+**Before you can receive tips, you must register with EddieLives_bot:**
+
+1. **Set up a SUI wallet** (if you don't have one):
+   - Recommended: [Slush Wallet](https://slush.app) - Official SUI wallet
+   - Alternative: [Ethos Wallet](https://ethoswallet.xyz/)
+
+2. **Register with EddieLives_bot:**
+   - Open Telegram and find **@EddieLives_bot**
+   - Start a conversation and use `/start`
+   - Follow the bot's instructions to:
+     - Register your Telegram ID
+     - Connect your SUI wallet address
+     - Verify your registration
+
+3. **Share your Telegram ID with your community:**
+   - Display your Telegram ID in your stream overlay
+   - Add it to your social media profiles
+   - Include it in your stream title/description
+   - Example: "Tip me via @YourTelegramID on EddieLives_bot!"
+
+**Important:** The plugin will only show alerts for tips sent to your registered Telegram account via EddieLives_bot.
+
+## 💰 Tipping System Explained
+
+### How It Works:
+1. **Offchain Tipping (Instant & Free):**
+   - Viewers tip you using EddieLives_bot
+   - Tips are recorded offchain (no gas fees)
+   - You receive instant Telegram notifications
+   - OBS plugin displays the alert
+
+2. **Onchain Conversion:**
+   - Accumulated offchain tips are stored in the bot
+   - When ready, use `/claim` command to transfer to your SUI wallet
+   - Conversion happens onchain (small gas fee applies - you pay the gas, ~2€ worth of SUI covers a LOT of transactions)
+   - You receive actual TWICHCOIN tokens in your wallet
+
+### For Your Viewers:
+Share this simple guide with your audience:
+```text
+How to Tip:
+1. Open Telegram, PM @EddieLives_bot with /start or /menu commands
+2. Register with or without wallet (wallet needed for withdrawals)
+3. Use /drop for airdrop to get some TWICHCOIN tokens to start
+4. Tip me with: /tip @StreamerID amount message
+5. Let's have fun!
+````
 
 ## 🎥 Alert Configuration
 
@@ -80,7 +127,6 @@ Configure 3 alert tiers based on tip amounts:
 - **Position presets:** Top, Center, Bottom
 - Margin controls
 - Smooth fade-in / fade-out transitions
-- Independent timing from media animations
 
 ## 🧪 Testing
 
@@ -95,14 +141,26 @@ Use the **Test Alert** button in the plugin properties to instantly trigger a fa
 
 ## 🛡 Security Notes
 
-- Your Telegram session is stored locally
-- API credentials are never transmitted externally
-- No cloud services or third-party APIs
-- No browser embeds – everything runs in OBS
+- **Local Storage:** Your Telegram session is stored locally on your computer only
+- **API Security:** Telegram API credentials are never transmitted externally or shared
+- **No Third Parties:** No cloud services, external APIs, or browser embeds used
+- **Direct Integration:** Everything runs locally within OBS Studio
+- **Read-Only Access:** Plugin only **listens** to EddieLives_bot messages
+- **No Data Sent:** Does not send any data to EddieLives_bot or anyone else
+- **Wallet Safety:** EddieLives_bot will never ask for:
+  - Private keys or seed phrases
+  - Sensitive personal information
+- **Minimal Data:** Only reads incoming tip notifications (no personal data transmitted)
+- **Telegram Security:** Standard Telegram 2FA protects your account
+- **Transparency:** Codebase is open for security review
 
-## 🪙 About TWICHCOIN
+## 🪙 About TWICHCOIN & EddieLives_bot
 
-TWICHCOIN is a token on the SUI blockchain designed for streaming and tipping. EddieLives_bot is the official TWICHCOIN tipping & faucet service on Telegram. This plugin is purpose-built for that ecosystem.
+TWICHCOIN is a token on the SUI blockchain designed for streaming and tipping. **EddieLives_bot** is the official TWICHCOIN tipping & faucet service on Telegram that enables:
+
+- **Offchain tipping** (instant, no gas fees)
+- **Onchain conversion** of accumulated tips
+- **Faucet access** for everyone with 24h cooldown and limited supply.
 
 ## ❤️ Credits
 
@@ -120,3 +178,21 @@ MIT
 TwichTwit
 
 ---
+
+**Need Help?**
+- **Plugin issues:** Open a GitHub issue
+- **Tipping service:** Contact @EddieLives_bot on Telegram
+- **Wallet setup:** Visit [SUI Wallet Documentation](https://docs.sui.io/learn/wallet-browser)
+
+**🎯 Streamer Ready Checklist:**
+- [ ] Installed OBS plugin
+- [ ] Configured Telegram API credentials
+- [ ] Logged in via plugin
+- [ ] Created SUI wallet
+- [ ] Registered with EddieLives_bot
+- [ ] Customized alert appearance
+- [ ] Tested with preview button
+- [ ] Shared Telegram ID with community
+- [ ] Added tipping instructions to stream overlay
+
+**💡 Pro Tip:** Create a !tip command in your chat bot that explains how viewers can tip you via EddieLives_bot!
