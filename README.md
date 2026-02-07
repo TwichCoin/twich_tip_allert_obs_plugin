@@ -1,167 +1,122 @@
-# twich_tip_allert_obs_plugin
+# TWICH Tip Alert – OBS Plugin
 
-TWICH Tip Alert – OBS Plugin
+Real-time TWICHCOIN tipping alerts for OBS Studio, powered by Telegram's EddieLives_bot.
 
-Powered by EddieLives_bot on Telegram
-Official TWICHCOIN tipping & faucet service
+![Demo](https://img.shields.io/badge/status-active-success) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![OBS](https://img.shields.io/badge/OBS-64--bit-6441a5)
 
-✨ What is this?
+## ✨ Overview
 
-  TWICH Tip Alert is an OBS Studio plugin that displays real-time on-stream alerts for TWICHCOIN (SUI token) tips received via Telegram.
-  It listens to messages from EddieLives_bot, the official TWICHCOIN tipping and faucet bot, and renders:
+TWICH Tip Alert is an OBS Studio plugin that displays real-time on-stream alerts for TWICHCOIN (SUI token) tips received via Telegram. It listens to messages from EddieLives_bot (the official TWICHCOIN tipping and faucet service) and renders customizable alerts directly within OBS.
 
-  🎥 Tier-based WebM animations
-  📝 Fully customizable text overlays
-  🎨 Configurable fonts, colors, position, fades
-  🔐 Secure Telegram login via your own API credentials
-  
-    No browser sources.
-    No third-party services.
-    Everything runs locally inside OBS.
+**Key Features:**
+- 🎥 **Tier-based WebM animations** (3 configurable tiers)
+- 📝 **Fully customizable text overlays** with dynamic variables
+- 🎨 **Complete styling control** – fonts, colors, positioning, fades
+- 🔐 **Secure local Telegram login** using your own API credentials
+- 🚫 **No browser sources or third-party services** – everything runs locally
 
-🧠 How it works (high level)
+## 📦 Installation
 
-  You install the OBS plugin
-  You log in to Telegram inside OBS (via TDLib)
-  The plugin listens to EddieLives_bot
-  When a TWICHCOIN tip arrives:
-  The correct animation tier is selected
-  Text is rendered using your template
-  Fade-in / fade-out is applied
-  Everything is drawn directly in OBS
+### Requirements
+- OBS Studio 64-bit
+- Windows 10 / 11
+- Telegram account
+- Telegram API credentials (free)
 
-📦 Installation
-  Requirements
-  
-    OBS Studio 64-bit
-    Windows 10 / 11
-    Telegram account
-    Telegram API credentials (free)
+### Installation Steps
+1. **Download** the latest installer from [Releases](https://github.com/yourusername/twitch_tip_alert_obs_plugin/releases)
+2. **Close OBS Studio** (important!)
+3. **Run** `TWICH_Tip_Alert_Setup.exe`
+4. The installer will automatically place files in `obs-studio\obs-plugins\64bit`
+5. Launch OBS Studio
+6. Add a new source: **Sources → + → TWICH Tip Alerts (Telegram)**
 
-Install steps"
+## 🔐 Telegram Setup (Required)
 
-  Download the latest installer from the Releases page
-  👉 GitHub → Releases → TWICH_Tip_Alert_Setup.exe
-  
-  Close OBS Studio (important)
-  Run the installer
-  It automatically installs into:
-  obs-studio\obs-plugins\64bit
+This plugin uses your own Telegram session for security.
 
-  Required DLLs are included (OpenSSL, zlib, TDLib)
+### Step 1: Get Telegram API Credentials
+1. Visit [https://my.telegram.org](https://my.telegram.org)
+2. Log in with your phone number
+3. Click "API development tools"
+4. Copy your `api_id` & `api_hash`
 
-Launch OBS Studio
+### Step 2: Log In Within OBS
+1. In the plugin properties, open **Advanced** settings
+2. Enter your API ID & API HASH
+3. Click **Save credentials**
+4. Follow the login flow:
+   - Enter phone number
+   - Enter verification code
+   - Enter 2FA password (if enabled)
+5. Status will show **READY (logged in)** when successful
 
-Add a new source:
+## 🎥 Alert Configuration
 
-Sources → + → TWICH Tip Alerts (Telegram)
+### Tier-Based Animations
+Configure 3 alert tiers based on tip amounts:
+- **Default thresholds:** Tier 1 (0+), Tier 2 (10+), Tier 3 (50+)
+- Each tier can have its own WebM animation
+- The highest tier whose threshold is met will be played
 
-🔐 Telegram setup (required)
+### Text Overlay Customization
+**Template variables available:**
+- `{user}` – Tipper's username
+- `{amount}` – Tip amount
+- `{symbol}` – Currency symbol (TWICH)
+- `{message}` – Optional message from tipper
 
-  This plugin uses your own Telegram session, not a shared service.
-  
-  Step 1: Get Telegram API credentials
-  
-    Open 👉 https://my.telegram.org
-    Log in with your phone number
-    Click “API development tools”
-    Copy  api_id &  api_hash
+**Default template:** `{user} tipped {amount} {symbol}`
 
-Step 2: Log in inside OBS
+**Styling options:**
+- Color picker
+- Font family (uses installed system fonts)
+- Font size
+- Optional outline with adjustable thickness
 
-In the plugin properties:
+**⚠️ Font Note:** If you select a font not installed on your system, text won't render (no automatic fallback).
 
-  Open Advanced
-  
-  Enter API ID & API HASH
-  Click Save credentials
-  
-  Follow the login flow:
-  Enter phone
-  Enter code
-  
-  Enter 2FA password (if enabled)
-  
-  When ready, status will show READY (logged in)
+### Position & Animation
+- **Position presets:** Top, Center, Bottom
+- Margin controls
+- Smooth fade-in / fade-out transitions
+- Independent timing from media animations
 
-🎥 Alert media (tiered)
+## 🧪 Testing
 
-You can configure 3 alert tiers based on the tip amount.
+Use the **Test Alert** button in the plugin properties to instantly trigger a fake tip and preview your setup.
 
-  Default thresholds Tier 1 → 0, Tier 2 → 10, Tier 3 → 50
+## 🧹 Uninstallation
 
-  Each tier can play its own WebM animation.
+1. Go to **Windows → Add or Remove Programs**
+2. Find **TWICH Tip Alert**
+3. Click **Uninstall**
+4. All OBS plugin files will be removed cleanly
 
-Logic:
+## 🛡 Security Notes
 
-  The highest tier whose threshold is met is played.
-  
-  📝 Text overlay features
-  
-  Fully customizable per alert:
-  
-  Text template
-  {user} tipped {amount} {symbol}
-  {message}
-  
-  
-  Available variables:
-  
-    {user}
-    {amount}
-    {symbol}
-    {message}
-  
-  Text styling
-  
-    Color picker
-    Font family (Arial / Segoe UI / Roboto or any installed font)
-    Font size
-    Optional outline
-    Outline thickness
-  
-  ⚠️ If you select a font not installed on your system, nothing is rendered
-  (this is intentional – no fallback).
-  
-  Position & animation
-  
-  Position preset:
-  
-    Top, Center, Bottom
-    Margin control
-    Smooth fade-in / fade-out
-    Independent from media animation
+- Your Telegram session is stored locally
+- API credentials are never transmitted externally
+- No cloud services or third-party APIs
+- No browser embeds – everything runs in OBS
 
-🧪 Test alert
+## 🪙 About TWICHCOIN
 
-  There is a Test Alert button in the properties panel to instantly trigger a fake tip and preview your setup.
+TWICHCOIN is a token on the SUI blockchain designed for streaming and tipping. EddieLives_bot is the official TWICHCOIN tipping & faucet service on Telegram. This plugin is purpose-built for that ecosystem.
 
-🧹 Uninstalling
+## ❤️ Credits
 
-  Go to Windows → Add or Remove Programs
-  Find TWICH Tip Alert
-  Uninstall
-  OBS files are removed cleanly.
+- [OBS Studio](https://obsproject.com/)
+- [Telegram TDLib](https://core.telegram.org/tdlib)
+- [TWICHCOIN Project](https://twichcoin.org/)
+- EddieLives_bot on Telegram
 
-🛡 Security notes
+## 📄 License
 
-  Your Telegram session is stored locally
-  API credentials are never sent anywhere
-  No cloud services
-  No browser embeds
-  No third-party APIs
+MIT
 
-🪙 About TWICHCOIN
+## 🤝 Contributing
 
-TWICHCOIN is a token on the SUI blockchain designed for streaming and tipping.
+TwichTwit
 
-EddieLives_bot is the official TWICHCOIN tipping & faucet service on Telegram.
-
-This plugin is purpose-built for that ecosystem.
-
-
-❤️ Credits
-  OBS Studio
-  Telegram TDLib
-  TWICHCOIN project
-  
+---
