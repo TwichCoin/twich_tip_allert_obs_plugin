@@ -182,7 +182,7 @@ TwichTwit
 **Need Help?**
 - **Plugin issues:** Open a GitHub issue
 - **Tipping service:** Contact @EddieLives_bot on Telegram
-- **Wallet setup:** Visit [SUI Wallet Documentation](https://docs.sui.io/learn/wallet-browser)
+- **Wallet setup:** Visit [SUI Wallet Documentation](https://slush.app/get-started)
 
 **🎯 Streamer Ready Checklist:**
 - [ ] Installed OBS plugin
